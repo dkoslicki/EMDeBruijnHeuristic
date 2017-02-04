@@ -1,54 +1,60 @@
 
 #This script if based on Jason McClelland's heuristic algorithm for computing the EMD. It needs and input distance D and probability vectors A and B (all as .mat files)
-import numpy
+import numpy as np
 import scipy.io as sio
+import h5py
 
-contents = sio.loadmat('/nfs1/Koslicki_Lab/koslickd/CAMI/EvaluationMetrics/EMD/PhylogeneticTrees/D.mat')
-Distance = contents['D'] # Using the distance matrix formed in the other script.
+# Need a better way to deal with the distance matrices....hdf5?
 
-contents = sio.loadmat('/nfs1/Koslicki_Lab/koslickd/CAMI/EvaluationMetrics/EMD/PhylogeneticTrees/A.mat')
-A = contents['A']
-contents = sio.loadmat('/nfs1/Koslicki_Lab/koslickd/CAMI/EvaluationMetrics/EMD/PhylogeneticTrees/B.mat')
-B = contents['B']
+def EMDeBruijnHeuristic(distmatfile, sampleAfile, sampleBfile):
+    contents = sio.loadmat(distmatfile)
+    Distance = contents['D']  # Using the distance matrix formed in the other script.
+    maxd = np.max(Distance)
 
-MassA = A[0]  # Pick off the masses for the support of A and B (We'll be editting these, so we leave A, B alone)
-MassB = B[0]
+    MassA = np.genfromtxt(sampleAfile)
+    MassA /= np.sum(MassA)
+    MassB = np.genfromtxt(sampleBfile)
+    MassB /= np.sum(MassB)
 
-EMD = 0  # Initialize the EMD computation.
+    EMD = 0  # Initialize the EMD computation.
 
-d = 0  # Initialize distance to move mass at 0.
+    d = 0  # Initialize distance to move mass at 0.
 
-InitialMove = [min([MassA[i], MassB[i]]) for i in range(0, len(MassA))]
-Flow = numpy.zeros([len(MassA), len(MassA)], dtype=numpy.float64)  #Later, can make this a sparse matrix for computational efficiency
+    InitialMove = [min([MassA[i], MassB[i]]) for i in range(0, len(MassA))]
+    Flow = np.zeros([len(MassA), len(MassA)], dtype=np.float64)  #Later, can make this a sparse matrix for computational efficiency
 
-MassA -= InitialMove # Removes mass that was moved initially.
-MassB -= InitialMove
+    MassA -= InitialMove  # Removes mass that was moved initially.
+    MassB -= InitialMove
 
-while sum(MassA) > 1e-10:  # While we still have mass to move,
-    d += 1 # increment distance to move
-    IndicesSortedMassSourceA = numpy.flipud(numpy.argsort(MassA))  # sort the sources, big to small.
-    for SourceA in IndicesSortedMassSourceA:  # Now, for each source of mass in A
-        if MassA[SourceA] == 0:  # Have we gotten through all the sources with mass left? If so, break.
-            break
-
-        dNeighborsSourceA = numpy.argwhere(Distance[SourceA, :] == d)# Find the n-mers in B which are distance d from our source.
-        dNeighborsSourceA = dNeighborsSourceA.flatten()
-        IndicesSortedMassB = numpy.flipud(numpy.argsort(MassB[dNeighborsSourceA]))  # We order the sinks, we're going to fill from the top down.
-        for SinkB in IndicesSortedMassB:  # Iterating over the indices of the sinks.
-            if MassB[dNeighborsSourceA[SinkB]] == 0:
+    while sum(MassA) > 1e-10 and d <= maxd:  # While we still have mass to move,
+        d += 1  # increment distance to move
+        IndicesSortedMassSourceA = np.flipud(np.argsort(MassA))  # sort the sources, big to small.
+        for SourceA in IndicesSortedMassSourceA:  # Now, for each source of mass in A
+            if MassA[SourceA] == 0:  # Have we gotten through all the sources with mass left? If so, break.
                 break
-            if MassA[SourceA] - MassB[dNeighborsSourceA[SinkB]] >= 0:  # check to see if our source can fulfil this sink.
-                Flow[SourceA, dNeighborsSourceA[SinkB]] = MassB[dNeighborsSourceA[SinkB]]  # If so, note the flow.
-                EMD += d*MassB[dNeighborsSourceA[SinkB]]  # update the EMD calc,
-                MassA[SourceA] = MassA[SourceA] - MassB[dNeighborsSourceA[SinkB]]  # then remove mass from A
-                MassB[dNeighborsSourceA[SinkB]] = 0  # and remove mass from B.
-            else: # otherwise, we've run out of mass from SourceA.
-                Flow[SourceA, dNeighborsSourceA[SinkB]] = MassA[SourceA]  # If so, note the flow to this last sink,
-                EMD += d*MassA[SourceA]  # update the EMD calc,
-                MassB[dNeighborsSourceA[SinkB]] = MassB[dNeighborsSourceA[SinkB]]-MassA[SourceA]  # remove mass from B,
-                MassA[SourceA] = 0  # then remove mass from A
-                break  # and end the loop, with no more mass to distribute from this source.
-print EMD
+
+            dNeighborsSourceA = np.argwhere(Distance[SourceA, :] == d)# Find the n-mers in B which are distance d from our source.
+            dNeighborsSourceA = dNeighborsSourceA.flatten()
+            IndicesSortedMassB = np.flipud(np.argsort(MassB[dNeighborsSourceA]))  # We order the sinks, we're going to fill from the top down.
+            for SinkB in IndicesSortedMassB:  # Iterating over the indices of the sinks.
+                if MassB[dNeighborsSourceA[SinkB]] == 0:
+                    break
+                if MassA[SourceA] - MassB[dNeighborsSourceA[SinkB]] >= 0:  # check to see if our source can fulfil this sink.
+                    Flow[SourceA, dNeighborsSourceA[SinkB]] = MassB[dNeighborsSourceA[SinkB]]  # If so, note the flow.
+                    EMD += d*MassB[dNeighborsSourceA[SinkB]]  # update the EMD calc,
+                    MassA[SourceA] = MassA[SourceA] - MassB[dNeighborsSourceA[SinkB]]  # then remove mass from A
+                    MassB[dNeighborsSourceA[SinkB]] = 0  # and remove mass from B.
+                else: # otherwise, we've run out of mass from SourceA.
+                    Flow[SourceA, dNeighborsSourceA[SinkB]] = MassA[SourceA]  # If so, note the flow to this last sink,
+                    EMD += d*MassA[SourceA]  # update the EMD calc,
+                    MassB[dNeighborsSourceA[SinkB]] = MassB[dNeighborsSourceA[SinkB]]-MassA[SourceA]  # remove mass from B,
+                    MassA[SourceA] = 0  # then remove mass from A
+                    break  # and end the loop, with no more mass to distribute from this source.
+    print EMD
 
 
 
+distmatfile = '../Test/D7Symm.mat'
+sampleAfile = '../Test/SRR3545929-7mers.txt'
+sampleBfile = '../Test/SRR3438988-7mers.txt'
+EMDeBruijnHeuristic(distmatfile, sampleAfile, sampleBfile)
